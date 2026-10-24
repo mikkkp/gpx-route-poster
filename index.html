@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>GPX Route Poster（本地免费 GPX 海报工具）</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="lib/maplibre-gl.css"><script src="lib/maplibre-gl.js"></script><script src="basemap.js"></script>
+<style>
+@font-face{font-family:"PosterSans";src:url(fonts/Montserrat-subset.woff2) format("woff2");font-weight:100 900}
+@font-face{font-family:"PosterCJK";src:url(fonts/NotoSansSC-subset.woff2) format("woff2");font-weight:100 900}
+body{margin:0;font-family:-apple-system,"Helvetica Neue",Arial,sans-serif;display:flex;height:100vh;background:#e9e9e9}
+#side{width:350px;overflow:auto;padding:14px;background:#fff;box-shadow:0 0 6px #0002;font-size:13px}
+#side h1{font-size:17px;margin:0 0 8px} label{display:block;margin:8px 0 2px;font-weight:600}
+input[type=text],select{width:100%;box-sizing:border-box;padding:4px} .row{display:flex;gap:6px;align-items:center}
+.chk label{display:inline;font-weight:400} button{padding:7px 10px;margin:4px 4px 0 0;cursor:pointer}
+.f{display:grid;grid-template-columns:20px 80px 1fr;gap:4px;align-items:center;margin:3px 0}
+#main{flex:1;display:flex;align-items:center;justify-content:center;overflow:auto}
+#wrap{position:relative;box-shadow:0 4px 20px #0004}#map{position:absolute}#preview{display:block}
+#files div{font-size:12px;color:#444} #status{color:#a40;margin-top:6px;white-space:pre-wrap}
+</style></head><body>
+<div id="side">
+<h1>GPX 地图海报（免费 · 无水印）</h1>
+<label>1. 导入 GPX（可多选叠加）</label><input type="file" id="gpx" accept=".gpx" multiple>
+<div id="files"></div><button id="clear">清空轨迹</button>
+<label>2. 版式</label><select id="layout"><option value="bar">分栏 Bar（左标题 / 右数据）</option><option value="center">居中 Centered（底图渐隐）</option><option value="classic">经典 Classic（大标题+剖面）</option></select>
+<label>3. 风格（OpenFreeMap 底图可拖拽/缩放；“网格”=无底图）</label><select id="style"></select><button id="refit">重新适配轨迹范围</button>
+<div class="chk"><input type="checkbox" id="labels" checked><label for="labels">地名/街名</label>
+<select id="lang" style="width:auto"><option value="zh">中文</option><option value="local">当地</option><option value="en">English</option></select></div>
+<div class="row"><div style="flex:1"><label>轨迹</label><input type="color" id="routeColor"></div><div style="flex:1"><label>文字</label><input type="color" id="textColor"></div>
+<div style="flex:1"><label>点缀</label><input type="color" id="accentColor"></div><div style="flex:1"><label>背景</label><input type="color" id="bgColor"></div></div>
+<label>轨迹粗细 <span id="lwv"></span></label><input type="range" id="lw" min="1" max="12" step="0.5" value="3.5" style="width:100%">
+<div class="chk"><input type="checkbox" id="markers"><label for="markers">起终点标记</label>
+<input type="checkbox" id="border"><label for="border">白边框</label>
+<input type="checkbox" id="multiColor"><label for="multiColor">多轨迹分色</label>
+<input type="checkbox" id="grid" checked><label for="grid">网格</label></div>
+<label>4. 方向 / 尺寸（300 DPI）</label>
+<div class="row"><select id="orient"><option value="p">竖版</option><option value="l">横版</option></select>
+<select id="size"><option value="30x40">30×40 cm</option><option value="40x50">40×50 cm</option><option value="50x70">50×70 cm</option><option value="29.7x42">A3</option></select></div>
+<label>5. 文字字段（勾选=显示；值留空=自动）</label>
+<div class="f"><input type="checkbox" id="sh_title" checked><span>标题</span><input type="text" id="title"></div>
+<div class="f"><input type="checkbox" id="sh_subtitle" checked><span>副标题</span><input type="text" id="subtitle" placeholder="自动：日期 · 地点"></div>
+<div class="f"><input type="checkbox" id="sh_date" checked><span>日期</span><input type="text" id="date" placeholder="自动"></div>
+<div class="f"><input type="checkbox" id="sh_location" checked><span>地点</span><input type="text" id="location" placeholder="如：北京"></div>
+<div id="statFields"></div>
+<div class="chk"><input type="checkbox" id="showElev"><label for="showElev">海拔剖面</label> 平滑 <input type="range" id="smooth" min="0" max="10" value="5" style="width:90px">
+<select id="units" style="width:auto"><option value="km">公制</option><option value="mi">英制</option></select></div>
+<label>6. 下载</label><button id="png">下载 PNG</button><button id="pdf">下载 PDF</button><div id="status"></div>
+<p style="color:#888;font-size:11px">纯本地运行，GPX 不上传。底图 © OpenFreeMap © OpenMapTiles，数据 © OpenStreetMap contributors。字体 Montserrat / Noto Sans SC（OFL）。</p>
+</div>
+<div id="main"><div id="wrap"><canvas id="preview"></canvas><div id="map"></div></div></div>
+<script>
+const FONT='"PosterSans","PosterCJK",sans-serif';
+const GRID={"网格 Mono Light":{bg:"#f3f3f1",route:"#1e1e1e",text:"#1e1e1e",accent:"#888888",grid:"#00000012"},"网格 Mono Dark":{bg:"#161718",route:"#f2f2f2",text:"#f2f2f2",accent:"#8a8a8a",grid:"#ffffff14"},
+ "网格 Night Neon":{bg:"#0f1824",route:"#35e07a",text:"#d9f7e6",accent:"#35e07a",grid:"#35e07a18"},"网格 Tour Yellow":{bg:"#fbd400",route:"#111111",text:"#111111",accent:"#5a4c00",grid:"#00000018"}};
+const STYLES={...MAPSTYLES,...GRID},PALETTE=["#e4572e","#17bebb","#ffc914","#76b041","#2e86ab","#a23b72","#f18f01"];
+const STATS=[["distance","距离 Distance",1],["time","时间 Duration",1],["pace","配速 Pace",1],["elevation","爬升 Elevation",1],["speed","速度 Speed",0]];
+const $=id=>document.getElementById(id);let tracks=[];
+$('statFields').innerHTML=STATS.map(([k,l,on])=>`<div class="f"><input type="checkbox" id="sh_${k}" ${on?'checked':''}><input type="text" id="lb_${k}" value="${l.split(' ')[1]}" title="标签"><input type="text" id="${k}" placeholder="自动"></div>`).join('');
+for(const k in STYLES){const o=document.createElement('option');o.textContent=k;$('style').appendChild(o)}
+function applyStyle(){const s=STYLES[$('style').value];$('routeColor').value=s.route;$('textColor').value=s.text;$('bgColor').value=s.bg;$('accentColor').value=s.accent;mapKey='';draw()}
+// ---- GPX ----
+function parseGPX(text,fname){const d=new DOMParser().parseFromString(text,"application/xml");
+ const pts=[...d.getElementsByTagName("trkpt"),...d.getElementsByTagName("rtept")].map(p=>{const e=p.getElementsByTagName("ele")[0],t=p.getElementsByTagName("time")[0];
+  return{lat:+p.getAttribute("lat"),lon:+p.getAttribute("lon"),ele:e?+e.textContent:null,t:t?Date.parse(t.textContent):null}}).filter(p=>isFinite(p.lat)&&isFinite(p.lon));
+ if(pts.length<2)throw new Error(fname+": 未找到轨迹点");const nm=d.querySelector("trk>name, metadata>name");return{name:nm?nm.textContent:fname,pts,stats:stats(pts)}}
+function hav(a,b){const R=6371e3,r=Math.PI/180,dl=(b.lat-a.lat)*r,dn=(b.lon-a.lon)*r;const x=Math.sin(dl/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+function stats(p){let dist=0,prof=[];for(let i=0;i<p.length;i++){if(i)dist+=hav(p[i-1],p[i]);if(p[i].ele!=null)prof.push([dist,p[i].ele])}
+ const ts=p.filter(x=>x.t).map(x=>x.t);return{dist,dur:ts.length>1?(ts[ts.length-1]-ts[0])/1000:0,prof,date:ts[0]||null}}
+function smoothProfile(pr,level){if(pr.length<2)return pr;const N=400,dm=pr[pr.length-1][0]||1,bins=[];let j=0;
+ for(let i=0;i<N;i++){const d=dm*i/(N-1);while(j<pr.length-2&&pr[j+1][0]<d)j++;const a=pr[j],b=pr[j+1],t=b[0]>a[0]?Math.min(1,Math.max(0,(d-a[0])/(b[0]-a[0]))):0;bins.push([d,a[1]+(b[1]-a[1])*t])}
+ const r=Math.round(level*2.5);if(!r)return bins;const sig=r/2,w=[];for(let k=-r;k<=r;k++)w.push(Math.exp(-k*k/(2*sig*sig)));
+ return bins.map((b,i)=>{let s=0,ws=0;for(let k=-r;k<=r;k++){const q=bins[Math.min(N-1,Math.max(0,i+k))];s+=q[1]*w[k+r];ws+=w[k+r]}return[b[0],s/ws]})}
+function gain(pr){let g=0;for(let i=1;i<pr.length;i++)if(pr[i][1]>pr[i-1][1])g+=pr[i][1]-pr[i-1][1];return g}
+function total(){const s={dist:0,dur:0,prof:[],date:null};let off=0;for(const t of tracks){s.dist+=t.stats.dist;s.dur+=t.stats.dur;s.date=s.date||t.stats.date;
+ for(const[d,e]of t.stats.prof)s.prof.push([d+off,e]);off+=t.stats.dist}s.sprof=smoothProfile(s.prof,+$('smooth').value);s.gain=gain(smoothProfile(s.prof,4));return s}
+const pad2=n=>String(n).padStart(2,'0'),hms=s=>`${Math.floor(s/3600)}:${pad2(Math.floor(s%3600/60))}:${pad2(Math.round(s%60))}`;
+function fieldVals(){const s=total(),mi=$('units').value=='mi',km=s.dist/(mi?1609.34:1000),dt=s.date?new Date(s.date):null;
+ const auto={distance:km.toFixed(1)+(mi?' mi':' km'),time:s.dur?hms(s.dur):'',pace:s.dur&&km?`${Math.floor(s.dur/km/60)}:${pad2(Math.round(s.dur/km%60))} /${mi?'mi':'km'}`:'',
+  elevation:mi?Math.round(s.gain*3.281)+' ft':Math.round(s.gain)+' m',speed:s.dur?(km/(s.dur/3600)).toFixed(1)+(mi?' mph':' km/h'):'',date:dt?`${dt.getFullYear()}-${pad2(dt.getMonth()+1)}-${pad2(dt.getDate())}`:''};
+ const v=k=>$(k).value||auto[k]||'',on=k=>$('sh_'+k).checked;const date=on('date')?v('date'):'',loc=on('location')?v('location'):'';
+ return{title:on('title')?$('title').value:'',subtitle:on('subtitle')?($('subtitle').value||[date,loc].filter(Boolean).join('  ·  ')):'',date,loc,
+  stats:STATS.filter(([k])=>on(k)&&v(k)).map(([k])=>[$('lb_'+k).value,v(k)]),prof:s.sprof,showE:$('showElev').checked&&s.sprof.length>1}}
+// ---- layout ----
+function layout(W,H){const u=Math.min(W,H)/1000,b=$('border').checked?45*u:0,L=$('layout').value,F=fieldVals();let fh;
+ if(L=='bar')fh=(150+(F.showE?110:0))*u;else if(L=='center')fh=0;else fh=(F.title||F.subtitle?190:0)*u+(F.stats.length?120:0)*u+(F.showE?150:0)*u+40*u;
+ const box={x:b,y:b,w:W-2*b,h:H-2*b-fh};if(L=='classic'&&!b){box.x=box.y=60*u;box.w=W-120*u;box.h=H-120*u-fh}return{u,b,L,F,fh,box}}
+function spaced(ctx,t,x,y,ls,align){ctx.letterSpacing=ls+'px';ctx.textAlign=align;ctx.fillText(t,x,y);ctx.letterSpacing='0px'}
+function profile(ctx,pr,x,y,w,h,col,alpha){if(pr.length<2)return;const dm=pr[pr.length-1][0]||1;let lo=1e9,hi=-1e9;pr.forEach(p=>{lo=Math.min(lo,p[1]);hi=Math.max(hi,p[1])});
+ ctx.beginPath();ctx.moveTo(x,y+h);pr.forEach(([d,e])=>ctx.lineTo(x+d/dm*w,y+h-(e-lo)/((hi-lo)||1)*h*.85-h*.05));ctx.lineTo(x+w,y+h);ctx.closePath();ctx.fillStyle=col;ctx.globalAlpha=alpha;ctx.fill();ctx.globalAlpha=1}
+function render(ctx,W,H,mapCanvas){const Lo=layout(W,H),{u,box,F}=Lo,st=STYLES[$('style').value],isMap=!!st.map;
+ const col={bg:$('bgColor').value,route:$('routeColor').value,text:$('textColor').value,acc:$('accentColor').value};
+ ctx.fillStyle=Lo.b?'#ffffff':col.bg;ctx.fillRect(0,0,W,H);ctx.fillStyle=col.bg;ctx.fillRect(box.x,box.y,box.w,H-2*Lo.b-(Lo.L=='classic'&&!Lo.b?0:0));if(Lo.b){ctx.fillRect(Lo.b,Lo.b,W-2*Lo.b,H-2*Lo.b)}
+ if(isMap){if(mapCanvas)ctx.drawImage(mapCanvas,box.x,box.y,box.w,box.h)}else drawVector(ctx,box,u,col,st);
+ if(Lo.L=='center'){const g=ctx.createLinearGradient(0,box.y+box.h*.62,0,box.y+box.h*.86);g.addColorStop(0,col.bg+'00');g.addColorStop(1,col.bg);ctx.fillStyle=g;ctx.fillRect(box.x,box.y+box.h*.62,box.w,box.h*.38+1)}
+ ctx.fillStyle=col.text;const X=Lo.b+40*u,R=W-Lo.b-40*u;
+ if(Lo.L=='bar'){const y0=box.y+box.h;ctx.fillStyle=col.route;ctx.fillRect(box.x,y0,box.w,3.5*u);let y=y0;
+  if(F.showE){profile(ctx,F.prof,box.x,y+3.5*u,box.w,100*u,col.route,.22);y+=110*u}
+  ctx.fillStyle=col.text;ctx.font=`600 ${34*u}px ${FONT}`;spaced(ctx,F.title,X,y+68*u,.3*u,'left');ctx.fillStyle=col.acc;ctx.font=`400 ${22*u}px ${FONT}`;spaced(ctx,F.subtitle,X,y+108*u,.5*u,'left');
+  let x=R;[...F.stats].reverse().forEach(([l,v])=>{ctx.font=`700 ${17*u}px ${FONT}`;const vw=ctx.measureText(v).width;ctx.font=`400 ${14*u}px ${FONT}`;const cw=Math.max(vw,ctx.measureText(l).width);
+   ctx.fillStyle=col.acc;spaced(ctx,l,x,y+64*u,.4*u,'right');ctx.fillStyle=col.text;ctx.font=`700 ${17*u}px ${FONT}`;spaced(ctx,v,x,y+91*u,.4*u,'right');x-=cw+42*u})}
+ else if(Lo.L=='center'){const n=F.stats.length;let y=box.y+box.h*(F.showE?.79:.84);
+  if(F.showE){profile(ctx,F.prof,W*.2,y-210*u,W*.6,80*u,col.route,.3)}
+  ctx.fillStyle=col.text;ctx.font=`300 ${58*u}px ${FONT}`;spaced(ctx,F.title,W/2,y,1*u,'center');if(F.subtitle){ctx.fillStyle=col.acc;ctx.font=`400 ${20*u}px ${FONT}`;spaced(ctx,F.subtitle,W/2,y+42*u,.8*u,'center')}
+  const cw=Math.min(190*u,(W-2*X)/Math.max(n,1));F.stats.forEach(([l,v],i)=>{const cx=W/2+(i-(n-1)/2)*cw;ctx.fillStyle=col.acc;ctx.font=`400 ${14*u}px ${FONT}`;spaced(ctx,l,cx,y+(F.subtitle?92:62)*u,.4*u,'center');
+   ctx.fillStyle=col.text;ctx.font=`700 ${17*u}px ${FONT}`;spaced(ctx,v,cx,y+(F.subtitle?118:88)*u,.4*u,'center')})}
+ else{let y=box.y+box.h+40*u;ctx.fillStyle=col.text;if(F.title||F.subtitle){ctx.font=`700 ${78*u}px ${FONT}`;spaced(ctx,F.title.toUpperCase(),W/2,y+80*u,2*u,'center');ctx.fillStyle=col.acc;ctx.font=`400 ${30*u}px ${FONT}`;spaced(ctx,F.subtitle,W/2,y+135*u,1*u,'center');y+=190*u}
+  const n=F.stats.length;F.stats.forEach(([l,v],i)=>{const cx=X+(R-X)*(i+.5)/n;ctx.fillStyle=col.text;ctx.font=`700 ${42*u}px ${FONT}`;spaced(ctx,v,cx,y+50*u,0,'center');ctx.fillStyle=col.acc;ctx.font=`400 ${17*u}px ${FONT}`;spaced(ctx,l.toUpperCase(),cx,y+84*u,2*u,'center')});if(n)y+=120*u;
+  if(F.showE)profile(ctx,F.prof,box.x,y+10*u,box.w,120*u,col.text,.25)}
+ if(isMap){ctx.fillStyle=Lo.L=='bar'||Lo.L=='classic'?col.acc:col.acc;ctx.globalAlpha=.8;ctx.font=`400 ${9*u}px ${FONT}`;ctx.textAlign='right';ctx.fillText(ATTRIB,W-Lo.b-12*u,H-Lo.b-12*u);ctx.globalAlpha=1}}
+const merc=p=>[p.lon/360+.5,.5-Math.log(Math.tan(Math.PI/4+p.lat*Math.PI/360))/(2*Math.PI)];
+function drawVector(ctx,box,u,col,st){if($('grid').checked){ctx.strokeStyle=st.grid;ctx.lineWidth=1.5*u;const g=box.w/12;for(let x=box.x;x<=box.x+box.w+1;x+=g){ctx.beginPath();ctx.moveTo(x,box.y);ctx.lineTo(x,box.y+box.h);ctx.stroke()}
+  for(let y=box.y;y<=box.y+box.h+1;y+=g){ctx.beginPath();ctx.moveTo(box.x,y);ctx.lineTo(box.x+box.w,y);ctx.stroke()}}
+ if(!tracks.length)return;let mn=[1,1],mx=[0,0];const P=tracks.map(t=>t.pts.map(p=>{const m=merc(p);mn=[Math.min(mn[0],m[0]),Math.min(mn[1],m[1])];mx=[Math.max(mx[0],m[0]),Math.max(mx[1],m[1])];return m}));
+ const sc=Math.min(box.w*.84/(mx[0]-mn[0]||1e-9),box.h*.84/(mx[1]-mn[1]||1e-9)),ox=box.x+box.w/2-(mn[0]+mx[0])/2*sc,oy=box.y+box.h/2-(mn[1]+mx[1])/2*sc;
+ ctx.lineJoin=ctx.lineCap='round';ctx.lineWidth=+$('lw').value*u;P.forEach((pp,i)=>{ctx.strokeStyle=$('multiColor').checked?PALETTE[i%PALETTE.length]:col.route;ctx.beginPath();pp.forEach(([x,y],j)=>j?ctx.lineTo(ox+x*sc,oy+y*sc):ctx.moveTo(ox+x*sc,oy+y*sc));ctx.stroke()});
+ if($('markers').checked)P.forEach(pp=>[[0,pp[0]],[1,pp[pp.length-1]]].forEach(([k,[x,y]])=>{ctx.beginPath();ctx.arc(ox+x*sc,oy+y*sc,7*u,0,7);ctx.fillStyle=k?col.route:col.bg;ctx.fill();ctx.lineWidth=3*u;ctx.strokeStyle=col.route;ctx.stroke()}))}
+// ---- map ----
+let map=null,mapKey='';
+function routeGeo(){return{type:'FeatureCollection',features:tracks.map((t,i)=>({type:'Feature',properties:{c:$('multiColor').checked?PALETTE[i%PALETTE.length]:$('routeColor').value},geometry:{type:'LineString',coordinates:t.pts.map(p=>[p.lon,p.lat])}}))}}
+function endsGeo(){const f=[];if($('markers').checked)tracks.forEach(t=>{const a=t.pts[0],b=t.pts[t.pts.length-1];f.push({type:'Feature',properties:{e:0},geometry:{type:'Point',coordinates:[a.lon,a.lat]}},{type:'Feature',properties:{e:1},geometry:{type:'Point',coordinates:[b.lon,b.lat]}})});return{type:'FeatureCollection',features:f}}
+// mu = 海报 u 在地图 CSS 像素中的大小；rm = 道路线宽倍率
+function fullStyle(st,mu,rm){const s=buildStyle(st.map,{labels:$('labels').checked,lang:$('lang').value,textU:mu*1.25,roadMul:rm||1});s.sources.r={type:'geojson',data:routeGeo()};s.sources.e={type:'geojson',data:endsGeo()};
+ s.layers.push(/* 轨迹置于标注之上，避免被路名打断 */{id:'route',type:'line',source:'r',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':['get','c'],'line-width':+$('lw').value*mu}},
+ {id:'ends',type:'circle',source:'e',paint:{'circle-radius':7*mu,'circle-color':['case',['==',['get','e'],1],$('routeColor').value,$('bgColor').value],'circle-stroke-width':3*mu,'circle-stroke-color':$('routeColor').value}});return s}
+function bounds(){let b=null;tracks.forEach(t=>t.pts.forEach(p=>{b=b?[[Math.min(b[0][0],p.lon),Math.min(b[0][1],p.lat)],[Math.max(b[1][0],p.lon),Math.max(b[1][1],p.lat)]]:[[p.lon,p.lat],[p.lon,p.lat]]}));return b}
+function refit(){const b=bounds();if(!map||!b)return;const c=map.getContainer(),L=$('layout').value,h=c.clientHeight,w=c.clientWidth;
+ map.fitBounds(b,{padding:{top:h*.08,left:w*.08,right:w*.08,bottom:L=='center'?h*.36:h*.08},animate:false})}
+let previewMU=1;
+function draw(){const {W,H}=sizePx(),k=Math.min(880/H,(window.innerWidth-410)/W),c=$('preview');c.width=Math.round(W*k);c.height=Math.round(H*k);
+ const st=STYLES[$('style').value],L=layout(c.width,c.height),md=$('map');render(c.getContext('2d'),c.width,c.height);$('lwv').textContent=$('lw').value;previewMU=L.u;
+ if(!st.map){md.style.display='none';return}md.style.display='block';Object.assign(md.style,{left:L.box.x+'px',top:L.box.y+'px',width:L.box.w+'px',height:L.box.h+'px'});
+ const key=[$('style').value,$('labels').checked,$('lang').value,$('lw').value,$('markers').checked,Math.round(L.u*100)].join('|');
+ if(!map){map=new maplibregl.Map({container:md,style:fullStyle(st,L.u),attributionControl:{compact:true},preserveDrawingBuffer:true,localIdeographFontFamily:"'PosterCJK',sans-serif"});map.on('load',refit);mapKey=key}
+ else{map.resize();if(key!==mapKey){map.setStyle(fullStyle(st,L.u));mapKey=key}else if(map.isStyleLoaded()){map.getSource('r').setData(routeGeo());map.getSource('e').setData(endsGeo())}}}
+function sizePx(){let[w,h]=$('size').value.split('x').map(Number);if($('orient').value=='l')[w,h]=[h,w];return{wcm:w,hcm:h,W:Math.round(w/2.54*300),H:Math.round(h/2.54*300)}}
+let lastExport={};
+function renderMapHiRes(W,H){return new Promise((res,rej)=>{const L=layout(W,H),c0=map.getContainer(),w0=c0.clientWidth,h0=c0.clientHeight,ratio=L.box.w/w0;
+ const dz=Math.max(0,Math.min(2,Math.round(Math.log2(ratio/2.5)))),cw=w0*2**dz,ch=h0*2**dz,pr=Math.min(ratio/2**dz,8192/Math.max(cw,ch)),d=document.createElement('div');
+ Object.assign(d.style,{position:'fixed',left:'-99999px',top:0,width:cw+'px',height:ch+'px'});document.body.appendChild(d);const t0=performance.getEntriesByType('resource').length;
+ const st=STYLES[$('style').value],m=new maplibregl.Map({container:d,style:fullStyle(st,L.u/pr,(4/3)**dz),center:map.getCenter(),zoom:map.getZoom()+dz,bearing:map.getBearing(),
+  pixelRatio:pr,maxCanvasSize:[16384,16384],preserveDrawingBuffer:true,interactive:false,attributionControl:false,fadeDuration:0,localIdeographFontFamily:"'PosterCJK',sans-serif",maxParallelImageRequests:6});
+ const to=setTimeout(()=>rej(new Error('底图渲染超时')),300000);m.on('error',e=>console.warn(e.error&&e.error.message));
+ m.once('idle',()=>{clearTimeout(to);const cv=m.getCanvas(),o=document.createElement('canvas');o.width=cv.width;o.height=cv.height;o.getContext('2d').drawImage(cv,0,0);
+  lastExport={zoomPreview:map.getZoom(),zoomExport:map.getZoom()+dz,pixelRatio:pr,mapPx:[cv.width,cv.height],tileRequests:performance.getEntriesByType('resource').slice(t0).filter(e=>/\.pbf/.test(e.name)).length};m.remove();d.remove();res(o)})})}
+// ---- export ----
+const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;t[n]=c}return b=>{let c=~0;for(const x of b)c=t[(c^x)&255]^(c>>>8);return~c>>>0}})();
+function addPHYs(png,dpi){const ppm=Math.round(dpi/0.0254),ch=new Uint8Array(21),dv=new DataView(ch.buffer);dv.setUint32(0,9);ch.set([112,72,89,115],4);dv.setUint32(8,ppm);dv.setUint32(12,ppm);ch[16]=1;dv.setUint32(17,CRC(ch.subarray(4,17)));
+ const out=new Uint8Array(png.length+21);out.set(png.subarray(0,33));out.set(ch,33);out.set(png.subarray(33),54);return out}
+function makePDF(jpg,pxW,pxH,ptW,ptH){const enc=new TextEncoder(),parts=[],offs=[];let len=0;const push=b=>{if(typeof b=='string')b=enc.encode(b);parts.push(b);len+=b.length};
+ const content=`q ${ptW.toFixed(2)} 0 0 ${ptH.toFixed(2)} 0 0 cm /Im0 Do Q`;push('%PDF-1.4\n');const obj=(n,s,stream)=>{offs[n]=len;push(`${n} 0 obj\n${s}\n`);if(stream){push('stream\n');push(stream);push('\nendstream\n')}push('endobj\n')};
+ obj(1,'<< /Type /Catalog /Pages 2 0 R >>');obj(2,'<< /Type /Pages /Kids [3 0 R] /Count 1 >>');obj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${ptW.toFixed(2)} ${ptH.toFixed(2)}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`);
+ obj(4,`<< /Type /XObject /Subtype /Image /Width ${pxW} /Height ${pxH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>`,jpg);obj(5,`<< /Length ${content.length} >>`,content);
+ const x=len;let xr=`xref\n0 6\n0000000000 65535 f \n`;for(let i=1;i<=5;i++)xr+=String(offs[i]).padStart(10,'0')+' 00000 n \n';push(xr+`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${x}\n%%EOF\n`);return new Blob(parts,{type:'application/pdf'})}
+async function exportBlob(fmt){await fontsReady;const {W,H,wcm,hcm}=sizePx(),c=document.createElement('canvas');c.width=W;c.height=H;const mc=STYLES[$('style').value].map&&map?await renderMapHiRes(W,H):null;render(c.getContext('2d'),W,H,mc);
+ if(fmt=='png'){const b=await new Promise(r=>c.toBlob(r,'image/png'));return new Blob([addPHYs(new Uint8Array(await b.arrayBuffer()),300)],{type:'image/png'})}
+ const j=await new Promise(r=>c.toBlob(r,'image/jpeg',0.95));return makePDF(new Uint8Array(await j.arrayBuffer()),W,H,wcm/2.54*72,hcm/2.54*72)}
+async function download(fmt){$('status').textContent='渲染中…（大尺寸需数十秒）';try{const b=await exportBlob(fmt),{W,H,wcm,hcm}=sizePx(),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=`poster-${wcm}x${hcm}cm-300dpi.${fmt}`;a.click();
+ $('status').textContent=`完成：${W}×${H}px @300DPI（${(b.size/1e6).toFixed(1)} MB）`}catch(e){$('status').textContent='失败：'+e.message}}
+const fontsReady=Promise.all([document.fonts.load(`600 20px PosterSans`),document.fonts.load(`300 20px PosterSans`),document.fonts.load(`700 20px PosterSans`),document.fonts.load(`400 20px PosterCJK`,'北京'),document.fonts.load(`600 20px PosterCJK`,'北京')]).then(()=>draw());
+window.__api={async exportB64(fmt){const b=await exportBlob(fmt),u=new Uint8Array(await b.arrayBuffer());let s='';for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode(...u.subarray(i,i+32768));return btoa(s)},
+ load(name,text){tracks.push(parseGPX(text,name));draw();refit()},set(id,v){const e=$(id);if(e.type=='checkbox')e.checked=v;else e.value=v;if(id=='style')applyStyle();draw();if(id=='layout')refit()},sizePx,refit,lastExport:()=>lastExport,
+ ready(){return fontsReady.then(()=>new Promise(r=>{if(!map||$('map').style.display=='none')return r(1);const f=()=>map.loaded()?r(1):map.once('idle',f);f()}))}};
+$('gpx').onchange=async e=>{for(const f of e.target.files){try{tracks.push(parseGPX(await f.text(),f.name))}catch(err){$('status').textContent=err.message}}
+ $('files').innerHTML=tracks.map(t=>`<div>• ${t.name} — ${(t.stats.dist/1000).toFixed(1)} km</div>`).join('');if(!$('title').value&&tracks[0])$('title').value=tracks[0].name;draw();refit()};
+$('clear').onclick=()=>{tracks=[];$('files').innerHTML='';draw()};$('refit').onclick=refit;window.onresize=draw;
+$('style').onchange=applyStyle;$('layout').addEventListener('change',()=>setTimeout(refit,50));
+document.querySelectorAll('#side input:not(#gpx),#side select:not(#style)').forEach(e=>e.addEventListener('input',draw));
+$('png').onclick=()=>download('png');$('pdf').onclick=()=>download('pdf');applyStyle();
+</script></body></html>

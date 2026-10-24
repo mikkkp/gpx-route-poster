@@ -1,0 +1,11 @@
+{
+  "name": "gpx-route-poster-export",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Headless export helper for gpx-route-poster",
+  "license": "MIT",
+  "dependencies": {
+    "maplibre-gl": "^4.7.1",
+    "puppeteer-core": "^23.11.1"
+  }
+}

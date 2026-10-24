@@ -1,0 +1,5 @@
+output/
+node_modules/
+*.gpx
+!samples/*.gpx
+.DS_Store
